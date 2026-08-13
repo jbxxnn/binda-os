@@ -1,10 +1,11 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
 import { Receipt, TrendingUp, Users, Wallet } from "lucide-react";
 import Link from "next/link";
 import { AppDashboardLiveStatus } from "@/components/app/app-dashboard-live-status";
-import {
-  formatCurrency,
-  type DashboardRecentTransaction,
-} from "@/lib/supabase/dashboard";
+import { listTransactions } from "@/lib/offline/db";
+import type { StoredTransactionRecord } from "@/lib/offline/types";
 
 type AppDashboardHomeProps = {
   userName: string;
@@ -18,6 +19,46 @@ type AppDashboardHomeProps = {
   recentTransactions: DashboardRecentTransaction[];
 };
 
+type DashboardRecentTransaction = {
+  id: string;
+  customerName: string;
+  amount: number;
+  timeLabel: string;
+  paymentMethodCode: string;
+};
+
+function formatCurrency(amount: number, currency = "NGN") {
+  return new Intl.NumberFormat("en-NG", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+function getTodayDateString() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Lagos",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  const year = parts.find((part) => part.type === "year")?.value ?? "2026";
+  const month = parts.find((part) => part.type === "month")?.value ?? "08";
+  const day = parts.find((part) => part.type === "day")?.value ?? "13";
+
+  return `${year}-${month}-${day}`;
+}
+
+function formatTimeLabel(dateString: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Lagos",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(new Date(dateString));
+}
+
 export function AppDashboardHome({
   userName,
   currentDateLabel,
@@ -29,20 +70,110 @@ export function AppDashboardHome({
   needsReviewCount,
   recentTransactions,
 }: AppDashboardHomeProps) {
+  const [localTransactions, setLocalTransactions] = useState<StoredTransactionRecord[]>([]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadLocalTransactions() {
+      try {
+        const transactions = await listTransactions();
+
+        if (!isActive) {
+          return;
+        }
+
+        setLocalTransactions(
+          transactions.filter(
+            (transaction) =>
+              transaction.syncStatus === "pending_sync" ||
+              transaction.syncStatus === "sync_failed" ||
+              transaction.syncStatus === "local_only",
+          ),
+        );
+      } catch {
+        if (isActive) {
+          setLocalTransactions([]);
+        }
+      }
+    }
+
+    void loadLocalTransactions();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  const today = getTodayDateString();
+  const localTransactionsToday = useMemo(
+    () => localTransactions.filter((transaction) => transaction.transactionDate === today),
+    [localTransactions, today],
+  );
+
+  const mergedSalesToday =
+    salesToday +
+    localTransactionsToday.reduce(
+      (sum, transaction) => sum + Number(transaction.finalTotal ?? 0),
+      0,
+    );
+  const mergedTransactionsToday = transactionsToday + localTransactionsToday.length;
+  const mergedCustomersToday =
+    new Set([
+      ...recentTransactions.map((transaction) => transaction.customerName.trim()).filter(Boolean),
+      ...localTransactionsToday
+        .map((transaction) => String(transaction.customerName ?? "").trim())
+        .filter(Boolean),
+    ]).size || customersToday;
+
+  const mergedRecentTransactions = useMemo(() => {
+    const localRecent = localTransactions.map((transaction) => ({
+      id: transaction.localId,
+      customerName: transaction.customerName ?? "Walk-in customer",
+      amount: Number(transaction.finalTotal ?? 0),
+      paymentMethodCode: transaction.paymentMethod,
+      timeLabel: formatTimeLabel(transaction.createdAt),
+      createdAt: transaction.createdAt,
+    }));
+
+    const remoteRecent = recentTransactions.map((transaction) => ({
+      ...transaction,
+      createdAt: "",
+    }));
+
+    return [...localRecent, ...remoteRecent]
+      .sort((left, right) => {
+        if (left.createdAt && right.createdAt) {
+          return right.createdAt.localeCompare(left.createdAt);
+        }
+
+        if (left.createdAt) {
+          return -1;
+        }
+
+        if (right.createdAt) {
+          return 1;
+        }
+
+        return 0;
+      })
+      .slice(0, 5);
+  }, [localTransactions, recentTransactions]);
+
   const summaryCards = [
     {
       label: "Sales",
-      value: formatCurrency(salesToday),
+      value: formatCurrency(mergedSalesToday),
       icon: Wallet,
     },
     {
       label: "Tx",
-      value: String(transactionsToday),
+      value: String(mergedTransactionsToday),
       icon: Receipt,
     },
     {
       label: "Customers",
-      value: String(customersToday),
+      value: String(Math.max(customersToday, mergedCustomersToday)),
       icon: Users,
     },
   ] as const;
@@ -127,18 +258,21 @@ export function AppDashboardHome({
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[minmax(0,0.92fr)_minmax(300px,0.48fr)]">
-          <div className="rounded-[0.9rem] border border-black/10 bg-white p-5 shadow-[0_18px_40px_rgba(18,18,18,0.05)] sm:p-6">
+          <div
+            id="recent-transactions"
+            className="rounded-[0.9rem] border border-black/10 bg-white p-5 shadow-[0_18px_40px_rgba(18,18,18,0.05)] sm:p-6"
+          >
             <h2 className="text-xl font-black tracking-[-0.04em] text-slate-950">
               Recent Transactions
             </h2>
 
-            {recentTransactions.length === 0 ? (
+            {mergedRecentTransactions.length === 0 ? (
               <div className="mt-5 rounded-[0.75rem] border border-dashed border-black/10 bg-[#fbf7f3] px-4 py-6 text-sm text-slate-500">
                 No transactions yet.
               </div>
             ) : (
               <div className="mt-5 space-y-3">
-                {recentTransactions.map((transaction) => (
+                {mergedRecentTransactions.map((transaction) => (
                   <div
                     key={transaction.id}
                     className="flex items-center justify-between gap-4 rounded-[0.75rem] border border-black/10 bg-[#fbf7f3] px-4 py-4 transition-colors hover:border-[#E89BFF]/40 hover:bg-[#fbf4ff]"

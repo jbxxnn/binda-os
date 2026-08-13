@@ -1,3 +1,5 @@
+"use client";
+
 import {
   ClipboardList,
   FileBarChart2,
@@ -9,11 +11,12 @@ import {
   Users,
 } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 const navigation = [
-  { label: "Home", icon: Home, href: "/app", active: true },
-  { label: "Transactions", icon: ClipboardList, href: "/app", active: false },
+  { label: "Home", icon: Home, href: "/app" },
+  { label: "Transactions", icon: ClipboardList, href: "/app/transactions" },
   { label: "Customers", icon: Users, href: "/app", active: false },
   { label: "Services", icon: Scissors, href: "/app", active: false },
   { label: "Staff", icon: ShieldUser, href: "/app", active: false },
@@ -22,6 +25,8 @@ const navigation = [
 ] as const;
 
 export function AppSidebar() {
+  const pathname = usePathname();
+
   return (
     <aside className="flex h-full min-h-screen w-full flex-col border-r border-white/8 bg-[#121212] text-white">
       <div className="sticky top-0 flex h-screen flex-col px-4 py-5 sm:px-5 lg:px-6 lg:py-6">
@@ -43,7 +48,8 @@ export function AppSidebar() {
                 href={item.href}
                 className={cn(
                   "flex items-center gap-3 rounded-[0.7rem] px-3 py-3 text-sm font-medium transition-colors",
-                  item.active
+                  pathname === item.href ||
+                    (item.href !== "/app" && pathname.startsWith(`${item.href}/`))
                     ? "bg-[#E89BFF] text-[#121212]"
                     : "text-white/62 hover:bg-white/6 hover:text-white",
                 )}

@@ -2,11 +2,21 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Search, X } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAppSession } from "@/components/app/app-session-provider";
-import { getReferenceCatalog, listTransactions } from "@/lib/offline/db";
+import {
+  getReferenceCatalog,
+  listTransactions,
+  saveTransaction as persistTransaction,
+  saveServiceDefinition,
+} from "@/lib/offline/db";
 import { syncOfflineData } from "@/lib/offline/sync";
-import type { ReferenceCatalog, StoredTransactionRecord } from "@/lib/offline/types";
+import type {
+  ReferenceCatalog,
+  ReferenceCustomer,
+  StoredTransactionRecord,
+} from "@/lib/offline/types";
 import {
   type TransactionComposerCustomerOption,
   type TransactionEntryOptions,
@@ -35,7 +45,32 @@ type ServiceLineItem = {
   notes: string;
 };
 
-type SheetType = "staff" | "service" | "new-customer" | "edit-service" | null;
+type SheetType =
+  | "staff"
+  | "service"
+  | "new-customer"
+  | "new-service"
+  | "discount"
+  | "edit-service"
+  | null;
+type SaveSuccessState = {
+  localId: string;
+  total: number;
+  customerLabel: string;
+  customerVisitLabel: string | null;
+  staffName: string;
+  paymentCode: string;
+};
+
+type DuplicateCandidate = {
+  localId: string;
+  customerLabel: string;
+  serviceLabel: string;
+  amount: number;
+  staffName: string;
+  createdAtLabel: string;
+  minutesAgo: number;
+};
 
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat("en-NG", {
@@ -122,6 +157,19 @@ function buildComposerOptions(
   const customerMap = new Map<string, TransactionComposerCustomerOption>();
   const customerStaffCounts = new Map<string, Map<string, number>>();
 
+  for (const customer of catalog.customers ?? []) {
+    const referenceCustomer = customer as ReferenceCustomer;
+
+    customerMap.set(referenceCustomer.id, {
+      id: referenceCustomer.id,
+      name: referenceCustomer.name,
+      phone: String(referenceCustomer.phone ?? "").trim(),
+      visitCount: 0,
+      lastVisitLabel: "No recorded visits yet",
+      usualStaffName: null,
+    });
+  }
+
   for (const transaction of transactions) {
     if (transaction.staffId) {
       staffUsageCounts.set(
@@ -145,7 +193,7 @@ function buildComposerOptions(
     }
 
     const phone = String(transaction.customerPhone ?? "").trim();
-    const key = `${name.toLowerCase()}::${phone}`;
+    const key = transaction.customerId ?? `${name.toLowerCase()}::${phone}`;
 
     if (!customerMap.has(key)) {
       customerMap.set(key, {
@@ -167,6 +215,9 @@ function buildComposerOptions(
     }
 
     customer.visitCount += 1;
+    customer.lastVisitLabel = formatRelativeVisitLabel(
+      transaction.transactionDate || transaction.createdAt,
+    );
 
     if (transaction.staffName) {
       const counts = customerStaffCounts.get(key) ?? new Map<string, number>();
@@ -210,6 +261,7 @@ function buildComposerOptions(
       .slice(0, 6),
     paymentMethods,
     customers: [...customerMap.values()]
+      .filter((customer) => Boolean(customer.name.trim()))
       .sort((left, right) => right.visitCount - left.visitCount)
       .slice(0, 20),
   };
@@ -222,7 +274,7 @@ function useComposerOptions() {
   useEffect(() => {
     let isActive = true;
 
-    async function loadLocalFirst() {
+    async function loadOptions() {
       try {
         const [catalog, transactions] = await Promise.all([
           getReferenceCatalog(),
@@ -242,21 +294,12 @@ function useComposerOptions() {
       }
     }
 
-    void loadLocalFirst();
+    void loadOptions();
 
     async function refreshInBackground() {
       try {
         await syncOfflineData();
-        const [catalog, transactions] = await Promise.all([
-          getReferenceCatalog(),
-          listTransactions(),
-        ]);
-
-        if (!isActive) {
-          return;
-        }
-
-        setOptions(buildComposerOptions(catalog, transactions));
+        await loadOptions();
       } catch {
         // Keep the local-first experience intact when remote refresh fails.
       }
@@ -269,14 +312,103 @@ function useComposerOptions() {
     };
   }, []);
 
-  return { options, isHydrated };
+  async function reloadOptions() {
+    const [catalog, transactions] = await Promise.all([
+      getReferenceCatalog(),
+      listTransactions(),
+    ]);
+    setOptions(buildComposerOptions(catalog, transactions));
+  }
+
+  return { options, isHydrated, reloadOptions };
+}
+
+function getTodayDateString() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Lagos",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  const year = parts.find((part) => part.type === "year")?.value ?? "2026";
+  const month = parts.find((part) => part.type === "month")?.value ?? "08";
+  const day = parts.find((part) => part.type === "day")?.value ?? "13";
+
+  return `${year}-${month}-${day}`;
+}
+
+function formatTimeLabel(dateString: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Lagos",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(new Date(dateString));
+}
+
+function getServiceSignature(items: Array<{
+  serviceId: string;
+  quantity: number;
+  unitPrice: number;
+}>) {
+  return [...items]
+    .map((item) => `${item.serviceId}:${item.quantity}:${item.unitPrice}`)
+    .sort()
+    .join("|");
+}
+
+function findPossibleDuplicate(
+  transactions: StoredTransactionRecord[],
+  candidate: {
+    customerLabel: string;
+    staffId: string;
+    totalAmount: number;
+    items: Array<{
+      serviceId: string;
+      quantity: number;
+      unitPrice: number;
+    }>;
+  },
+) {
+  const candidateSignature = getServiceSignature(candidate.items);
+  const now = Date.now();
+
+  return transactions.find((transaction) => {
+    const minutesAgo = Math.floor(
+      (now - new Date(transaction.createdAt).getTime()) / (1000 * 60),
+    );
+
+    if (minutesAgo < 0 || minutesAgo > 10) {
+      return false;
+    }
+
+    const transactionSignature = getServiceSignature(
+      transaction.items.map((item) => ({
+        serviceId: item.serviceId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+      })),
+    );
+
+    const transactionCustomer = String(transaction.customerName ?? "Walk-in customer");
+
+    return (
+      transaction.staffId === candidate.staffId &&
+      Number(transaction.finalTotal ?? 0) === candidate.totalAmount &&
+      transactionCustomer === candidate.customerLabel &&
+      transactionSignature === candidateSignature
+    );
+  });
 }
 
 export function AppTransactionComposer() {
   const router = useRouter();
   const { businessName, userName } = useAppSession();
-  const { options, isHydrated } = useComposerOptions();
+  const { options, isHydrated, reloadOptions } = useComposerOptions();
   const customerInputRef = useRef<HTMLInputElement | null>(null);
+  const staffSectionRef = useRef<HTMLElement | null>(null);
+  const servicesSectionRef = useRef<HTMLElement | null>(null);
   const [customerQuery, setCustomerQuery] = useState("");
   const [selectedCustomer, setSelectedCustomer] = useState<SelectedCustomer | null>(
     null,
@@ -290,9 +422,24 @@ export function AppTransactionComposer() {
   const [staffSearch, setStaffSearch] = useState("");
   const [newCustomerName, setNewCustomerName] = useState("");
   const [newCustomerPhone, setNewCustomerPhone] = useState("");
+  const [newServiceName, setNewServiceName] = useState("");
+  const [newServicePrice, setNewServicePrice] = useState("");
+  const [discountAmount, setDiscountAmount] = useState(0);
+  const [discountDraft, setDiscountDraft] = useState("");
   const [lineItems, setLineItems] = useState<ServiceLineItem[]>([]);
   const [editingLineItemId, setEditingLineItemId] = useState<string | null>(null);
-  const [errors, setErrors] = useState<{ staff?: string; services?: string }>({});
+  const [errors, setErrors] = useState<{
+    staff?: string;
+    services?: string;
+    payment?: string;
+    save?: string;
+  }>({});
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState<SaveSuccessState | null>(null);
+  const [allLocalTransactions, setAllLocalTransactions] = useState<StoredTransactionRecord[]>([]);
+  const [duplicateCandidate, setDuplicateCandidate] = useState<DuplicateCandidate | null>(
+    null,
+  );
 
   useEffect(() => {
     setSelectedStaffId((current) => current || options.staff[0]?.id || "");
@@ -377,13 +524,75 @@ export function AppTransactionComposer() {
     (sum, item) => sum + item.lineTotal,
     0,
   );
+  const netTotal = Math.max(0, totalAmount - discountAmount);
   const canSave =
-    lineItems.length > 0 && totalAmount > 0 && Boolean(selectedStaffId) && Boolean(selectedPaymentCode);
+    lineItems.length > 0 &&
+    netTotal > 0 &&
+    Boolean(selectedStaffId) &&
+    Boolean(selectedPaymentCode) &&
+    !isSaving;
   const isDirty =
     Boolean(customerQuery.trim()) ||
     Boolean(selectedCustomer) ||
     lineItems.length > 0 ||
     Boolean(notes.trim());
+
+  function resetComposer(keepPayment = true) {
+    setCustomerQuery("");
+    setSelectedCustomer(null);
+    setNotes("");
+    setNotesOpen(false);
+    setSheet(null);
+    setServiceSearch("");
+    setStaffSearch("");
+    setNewCustomerName("");
+    setNewCustomerPhone("");
+    setNewServiceName("");
+    setNewServicePrice("");
+    setDiscountAmount(0);
+    setDiscountDraft("");
+    setLineItems([]);
+    setEditingLineItemId(null);
+    setErrors({});
+    setSaveSuccess(null);
+    setDuplicateCandidate(null);
+    setSelectedStaffId(options.staff[0]?.id ?? "");
+
+    if (!keepPayment) {
+      setSelectedPaymentCode(options.paymentMethods[0]?.code ?? "");
+    }
+
+    requestAnimationFrame(() => {
+      customerInputRef.current?.focus();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  }
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadAllLocalTransactions() {
+      try {
+        const transactions = await listTransactions();
+
+        if (!isActive) {
+          return;
+        }
+
+        setAllLocalTransactions(transactions);
+      } catch {
+        if (isActive) {
+          setAllLocalTransactions([]);
+        }
+      }
+    }
+
+    void loadAllLocalTransactions();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   function closeComposer() {
     if (isDirty && !window.confirm("Discard this transaction?")) {
@@ -401,6 +610,17 @@ export function AppTransactionComposer() {
   function openServiceSheet() {
     setServiceSearch("");
     setSheet("service");
+  }
+
+  function openNewServiceSheet() {
+    setNewServiceName("");
+    setNewServicePrice("");
+    setSheet("new-service");
+  }
+
+  function openDiscountSheet() {
+    setDiscountDraft(discountAmount > 0 ? String(discountAmount) : "");
+    setSheet("discount");
   }
 
   function selectCustomer(customer: TransactionComposerCustomerOption) {
@@ -444,6 +664,31 @@ export function AppTransactionComposer() {
     setSheet(null);
   }
 
+  async function createAndUseService() {
+    const name = newServiceName.trim();
+    const expectedPrice = Math.max(0, Number(newServicePrice) || 0);
+
+    if (!name || expectedPrice <= 0) {
+      return;
+    }
+
+    const service = await saveServiceDefinition({
+      name,
+      expectedPrice,
+    });
+
+    await reloadOptions();
+    addService(service.id);
+    void syncOfflineData();
+    setNewServiceName("");
+    setNewServicePrice("");
+  }
+
+  function applyDiscount() {
+    setDiscountAmount(Math.max(0, Number(discountDraft) || 0));
+    setSheet(null);
+  }
+
   function openEditService(lineItemId: string) {
     setEditingLineItemId(lineItemId);
     setSheet("edit-service");
@@ -484,8 +729,13 @@ export function AppTransactionComposer() {
     setSheet(null);
   }
 
-  function saveTransaction() {
-    const nextErrors: { staff?: string; services?: string } = {};
+  async function saveTransaction(allowDuplicate = false) {
+    const nextErrors: {
+      staff?: string;
+      services?: string;
+      payment?: string;
+      save?: string;
+    } = {};
 
     if (!selectedStaffId) {
       nextErrors.staff = "Select who handled this transaction.";
@@ -495,10 +745,165 @@ export function AppTransactionComposer() {
       nextErrors.services = "Add at least one service.";
     }
 
+    if (lineItems.some((item) => item.unitPrice <= 0 || item.quantity <= 0)) {
+      nextErrors.services = "Each service must have a valid price and quantity.";
+    }
+
+    if (!selectedPaymentCode) {
+      nextErrors.payment = "Select how this transaction was paid.";
+    }
+
     setErrors(nextErrors);
 
     if (Object.keys(nextErrors).length > 0) {
+      if (nextErrors.staff) {
+        staffSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      } else if (nextErrors.services) {
+        servicesSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      } else if (nextErrors.payment) {
+        servicesSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      }
       return;
+    }
+
+    const selectedStaff = options.staff.find((entry) => entry.id === selectedStaffId);
+
+    if (!selectedStaff || !selectedPaymentCode) {
+      setErrors({
+        save: "Transaction details are incomplete. Refresh local data and try again.",
+      });
+      return;
+    }
+
+    const customerLabel =
+      selectedCustomer?.kind === "existing"
+        ? selectedCustomer.customer.name
+        : selectedCustomer?.kind === "new"
+          ? selectedCustomer.name
+          : "Walk-in customer";
+
+    const duplicateMatch =
+      !allowDuplicate &&
+      findPossibleDuplicate(allLocalTransactions, {
+        customerLabel,
+        staffId: selectedStaffId,
+        totalAmount: netTotal,
+        items: lineItems.map((item) => ({
+          serviceId: item.serviceId,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+        })),
+      });
+
+    if (duplicateMatch) {
+      const minutesAgo = Math.max(
+        1,
+        Math.floor((Date.now() - new Date(duplicateMatch.createdAt).getTime()) / (1000 * 60)),
+      );
+
+      setDuplicateCandidate({
+        localId: duplicateMatch.localId,
+        customerLabel,
+        serviceLabel: duplicateMatch.primaryServiceName,
+        amount: Number(duplicateMatch.finalTotal ?? 0),
+        staffName: duplicateMatch.staffName,
+        createdAtLabel: formatTimeLabel(duplicateMatch.createdAt),
+        minutesAgo,
+      });
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    setIsSaving(true);
+
+    try {
+      const record = await persistTransaction({
+        transactionDate: getTodayDateString(),
+        staffId: selectedStaffId,
+        staffName: selectedStaff.name,
+        paymentMethod: selectedPaymentCode,
+        customerKind: selectedCustomer?.kind === "walk-in" ? "walk_in" : "named",
+        customerId:
+          selectedCustomer?.kind === "existing"
+            ? selectedCustomer.customer.id
+            : null,
+        customerName:
+          selectedCustomer?.kind === "existing"
+            ? selectedCustomer.customer.name
+            : selectedCustomer?.kind === "new"
+              ? selectedCustomer.name
+              : null,
+        customerPhone:
+          selectedCustomer?.kind === "existing"
+            ? selectedCustomer.customer.phone || null
+            : selectedCustomer?.kind === "new"
+              ? selectedCustomer.phone || null
+              : null,
+        notes: notes.trim() || null,
+        subtotal: totalAmount,
+        discountTotal: discountAmount,
+        transactionStatus: "confirmed",
+        finalTotal: netTotal,
+        items: lineItems.map((item) => ({
+          type: "service",
+          serviceId: item.serviceId,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          staffId: item.staffId,
+          staffName:
+            options.staff.find((staffMember) => staffMember.id === item.staffId)?.name ??
+            null,
+          notes: item.notes || null,
+        })),
+        payments: [
+          {
+            amount: netTotal,
+            method: selectedPaymentCode,
+            status: "completed",
+          },
+        ],
+      });
+
+      await reloadOptions();
+
+      void syncOfflineData();
+
+      const customerVisitLabel =
+        selectedCustomer?.kind === "existing"
+          ? `${selectedCustomer.customer.visitCount + 1}${getOrdinalSuffix(
+              selectedCustomer.customer.visitCount + 1,
+            )} recorded visit`
+          : selectedCustomer?.kind === "new"
+            ? "1st recorded visit"
+            : null;
+
+      setSaveSuccess({
+        localId: record.localId,
+        total: netTotal,
+        customerLabel,
+        customerVisitLabel,
+        staffName: selectedStaff.name,
+        paymentCode: selectedPaymentCode,
+      });
+      setDuplicateCandidate(null);
+      setErrors({});
+      setAllLocalTransactions((current) => [record, ...current]);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch {
+      setErrors({
+        save: "Could not save this transaction locally. Try again.",
+      });
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -509,6 +914,62 @@ export function AppTransactionComposer() {
   const visibleRecentServices = options.recentServices.filter((entry) =>
     filteredServices.some((candidate) => candidate.id === entry.id),
   );
+
+  if (saveSuccess) {
+    return (
+      <div className="min-h-screen bg-[#f5eee6] px-4 py-6 text-slate-950 sm:px-6">
+        <div className="mx-auto max-w-2xl">
+          <div className="rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]">
+            <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
+              Transaction saved
+            </p>
+            <h1 className="mt-4 text-4xl font-black tracking-[-0.06em] text-slate-950">
+              {formatCurrency(saveSuccess.total)}
+            </h1>
+            <p className="mt-3 text-base text-slate-600">
+              added to today&apos;s sales
+            </p>
+
+            <div className="mt-8 space-y-5 border-t border-black/10 pt-6">
+              <div>
+                <p className="text-sm font-semibold text-slate-950">
+                  {saveSuccess.customerLabel}
+                </p>
+                {saveSuccess.customerVisitLabel ? (
+                  <p className="mt-1 text-sm text-slate-500">
+                    {saveSuccess.customerVisitLabel}
+                  </p>
+                ) : null}
+              </div>
+
+              <div>
+                <p className="text-sm font-semibold text-slate-950">
+                  {saveSuccess.staffName}
+                </p>
+                <p className="mt-1 text-sm text-slate-500">activity updated</p>
+              </div>
+            </div>
+
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => resetComposer(true)}
+                className="inline-flex items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-bold uppercase tracking-[0.16em] text-white transition-colors hover:bg-[#E89BFF] hover:text-[#121212]"
+              >
+                Add another
+              </button>
+              <Link
+                href={`/app/transactions/${saveSuccess.localId}`}
+                className="inline-flex items-center justify-center rounded-full border border-black/10 bg-white px-5 py-3 text-sm font-semibold text-slate-900 transition-colors hover:border-[#E89BFF] hover:bg-[#fbf4ff]"
+              >
+                View transaction
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#f5eee6] text-slate-950">
@@ -545,6 +1006,43 @@ export function AppTransactionComposer() {
                 </p>
               ) : null}
             </div>
+
+            {duplicateCandidate ? (
+              <section className="border-b border-black/10 py-6">
+                <div className="rounded-[0.9rem] border border-[#E89BFF]/45 bg-[#fbf4ff] p-4">
+                  <p className="font-semibold text-slate-950">Possible duplicate</p>
+                  <p className="mt-2 text-sm text-slate-600">
+                    A similar transaction was recorded {duplicateCandidate.minutesAgo} minute
+                    {duplicateCandidate.minutesAgo === 1 ? "" : "s"} ago.
+                  </p>
+                  <div className="mt-3 text-sm text-slate-600">
+                    <p>{duplicateCandidate.customerLabel}</p>
+                    <p>{duplicateCandidate.serviceLabel}</p>
+                    <p>
+                      {formatCurrency(duplicateCandidate.amount)} · {duplicateCandidate.staffName} ·{" "}
+                      {duplicateCandidate.createdAtLabel}
+                    </p>
+                  </div>
+                  <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                    <Link
+                      href={`/app/transactions/${duplicateCandidate.localId}`}
+                      className="inline-flex items-center justify-center rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition-colors hover:border-[#E89BFF] hover:bg-[#fbf4ff]"
+                    >
+                      View existing
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void saveTransaction(true);
+                      }}
+                      className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#E89BFF] hover:text-[#121212]"
+                    >
+                      Save anyway
+                    </button>
+                  </div>
+                </div>
+              </section>
+            ) : null}
 
             <section className="border-b border-black/10 py-6">
               <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
@@ -653,7 +1151,7 @@ export function AppTransactionComposer() {
               )}
             </section>
 
-            <section className="border-b border-black/10 py-6">
+            <section ref={staffSectionRef} className="border-b border-black/10 py-6">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
@@ -680,7 +1178,10 @@ export function AppTransactionComposer() {
               </div>
             </section>
 
-            <section className="border-b border-black/10 py-6">
+            <section
+              ref={servicesSectionRef}
+              className="border-b border-black/10 py-6"
+            >
               <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
                 Services
               </p>
@@ -725,6 +1226,13 @@ export function AppTransactionComposer() {
               >
                 + Add service
               </button>
+              <button
+                type="button"
+                onClick={openDiscountSheet}
+                className="mt-3 block text-sm text-slate-500 transition-colors hover:text-slate-950"
+              >
+                {discountAmount > 0 ? `Discount ${formatCurrency(discountAmount)}` : "+ Add discount"}
+              </button>
               {errors.services ? (
                 <p className="mt-2 text-sm text-[#b42318]">{errors.services}</p>
               ) : null}
@@ -754,6 +1262,9 @@ export function AppTransactionComposer() {
                   );
                 })}
               </div>
+              {errors.payment ? (
+                <p className="mt-2 text-sm text-[#b42318]">{errors.payment}</p>
+              ) : null}
             </section>
 
             <section className="border-b border-black/10 py-6 lg:hidden">
@@ -761,8 +1272,13 @@ export function AppTransactionComposer() {
                 Total
               </p>
               <p className="mt-3 text-4xl font-black tracking-[-0.06em] text-slate-950">
-                {formatCurrency(totalAmount)}
+                {formatCurrency(netTotal)}
               </p>
+              {discountAmount > 0 ? (
+                <p className="mt-2 text-sm text-slate-500">
+                  Subtotal {formatCurrency(totalAmount)} · Discount {formatCurrency(discountAmount)}
+                </p>
+              ) : null}
             </section>
 
             <section className="py-6">
@@ -786,6 +1302,9 @@ export function AppTransactionComposer() {
                   + Add note
                 </button>
               )}
+              {errors.save ? (
+                <p className="mt-4 text-sm text-[#b42318]">{errors.save}</p>
+              ) : null}
             </section>
           </div>
         </div>
@@ -838,32 +1357,41 @@ export function AppTransactionComposer() {
             <div className="mt-6 border-t border-black/10 pt-6">
               <p className="text-sm text-slate-500">Total</p>
               <p className="mt-2 text-3xl font-black tracking-[-0.05em] text-slate-950">
-                {formatCurrency(totalAmount)}
+                {formatCurrency(netTotal)}
               </p>
+              {discountAmount > 0 ? (
+                <p className="mt-2 text-sm text-slate-500">
+                  Subtotal {formatCurrency(totalAmount)} · Discount {formatCurrency(discountAmount)}
+                </p>
+              ) : null}
             </div>
 
-            <button
-              type="button"
-              onClick={saveTransaction}
-              disabled={!canSave}
-              className="mt-6 inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-bold uppercase tracking-[0.16em] text-white transition-colors hover:bg-[#E89BFF] hover:text-[#121212] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-white"
-            >
-              Save transaction
-            </button>
+          <button
+            type="button"
+            onClick={() => {
+              void saveTransaction();
+            }}
+            disabled={!canSave}
+            className="mt-6 inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-bold uppercase tracking-[0.16em] text-white transition-colors hover:bg-[#E89BFF] hover:text-[#121212] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-white"
+          >
+            {isSaving ? "Saving..." : "Save transaction"}
+          </button>
           </div>
         </aside>
       </div>
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-black/10 bg-white px-4 py-4 shadow-[0_-10px_30px_rgba(18,18,18,0.08)] lg:hidden">
         <div className="mx-auto max-w-6xl">
-          <p className="text-sm text-slate-500">Total {formatCurrency(totalAmount)}</p>
+          <p className="text-sm text-slate-500">Total {formatCurrency(netTotal)}</p>
           <button
             type="button"
-            onClick={saveTransaction}
+            onClick={() => {
+              void saveTransaction();
+            }}
             disabled={!canSave}
             className="mt-3 inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-bold uppercase tracking-[0.16em] text-white transition-colors hover:bg-[#E89BFF] hover:text-[#121212] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-white"
           >
-            Save transaction
+            {isSaving ? "Saving..." : "Save transaction"}
           </button>
         </div>
       </div>
@@ -992,6 +1520,14 @@ export function AppTransactionComposer() {
                       ))}
                     </div>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={openNewServiceSheet}
+                    className="mt-5 text-sm font-semibold text-slate-950 transition-colors hover:text-[#a65bd3]"
+                  >
+                    + Create new service
+                  </button>
                 </>
               ) : null}
 
@@ -1014,6 +1550,7 @@ export function AppTransactionComposer() {
                       <input
                         value={newCustomerPhone}
                         onChange={(event) => setNewCustomerPhone(event.target.value)}
+                        inputMode="tel"
                         placeholder="Phone helps Binda recognize returning customers."
                         className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-sm outline-none placeholder:text-slate-400"
                       />
@@ -1026,6 +1563,69 @@ export function AppTransactionComposer() {
                     className="mt-5 inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-bold uppercase tracking-[0.16em] text-white disabled:cursor-not-allowed disabled:bg-slate-300"
                   >
                     Add customer
+                  </button>
+                </>
+              ) : null}
+
+              {sheet === "new-service" ? (
+                <>
+                  <h2 className="text-lg font-semibold tracking-[-0.03em] text-slate-950">
+                    New service
+                  </h2>
+                  <div className="mt-5 space-y-4">
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">Name</label>
+                      <input
+                        value={newServiceName}
+                        onChange={(event) => setNewServiceName(event.target.value)}
+                        className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-slate-700">Price</label>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        value={newServicePrice}
+                        onChange={(event) => setNewServicePrice(event.target.value)}
+                        className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void createAndUseService();
+                    }}
+                    disabled={!newServiceName.trim() || Number(newServicePrice) <= 0}
+                    className="mt-5 inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-bold uppercase tracking-[0.16em] text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    Add and use
+                  </button>
+                </>
+              ) : null}
+
+              {sheet === "discount" ? (
+                <>
+                  <h2 className="text-lg font-semibold tracking-[-0.03em] text-slate-950">
+                    Add discount
+                  </h2>
+                  <div className="mt-5">
+                    <label className="text-sm font-medium text-slate-700">Amount</label>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      value={discountDraft}
+                      onChange={(event) => setDiscountDraft(event.target.value)}
+                      className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={applyDiscount}
+                    className="mt-5 inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-bold uppercase tracking-[0.16em] text-white"
+                  >
+                    Apply discount
                   </button>
                 </>
               ) : null}
@@ -1138,4 +1738,23 @@ export function AppTransactionComposer() {
       ) : null}
     </div>
   );
+}
+
+function getOrdinalSuffix(value: number) {
+  const mod10 = value % 10;
+  const mod100 = value % 100;
+
+  if (mod10 === 1 && mod100 !== 11) {
+    return "st";
+  }
+
+  if (mod10 === 2 && mod100 !== 12) {
+    return "nd";
+  }
+
+  if (mod10 === 3 && mod100 !== 13) {
+    return "rd";
+  }
+
+  return "th";
 }

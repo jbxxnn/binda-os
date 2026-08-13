@@ -1,6 +1,7 @@
 import type {
   LocalTransaction,
   ReferenceCatalog,
+  ReferenceItem,
   StoredTransactionRecord,
   SyncQueueItem,
   TransactionInput,
@@ -41,6 +42,7 @@ const defaultCatalog: ReferenceCatalog = {
     { code: "pos", label: "POS", active: true },
     { code: "card", label: "Card", active: true },
   ],
+  customers: [],
   source: "seed",
   refreshedAt: null,
   businessId: null,
@@ -50,6 +52,45 @@ type ReferenceCatalogRecord = {
   id: string;
   catalog: ReferenceCatalog;
 };
+
+function normalizeStoredTransactionRecord(
+  record: StoredTransactionRecord,
+): StoredTransactionRecord {
+  const payments =
+    Array.isArray(record.payments) && record.payments.length > 0
+      ? record.payments
+      : [
+          {
+            localId: createLocalId(),
+            amount: record.finalTotal,
+            method: record.paymentMethod,
+            status: "completed" as const,
+            reference: null,
+          },
+        ];
+
+  const items = (record.items ?? []).map((item) => ({
+    ...item,
+    type: item.type ?? "service",
+    staffId: item.staffId ?? record.staffId,
+    staffName: item.staffName ?? record.staffName ?? null,
+    notes: item.notes ?? null,
+  }));
+
+  return {
+    ...record,
+    transactionStatus: record.transactionStatus ?? "confirmed",
+    customerKind:
+      record.customerKind ??
+      (record.customerName || record.customerPhone ? "named" : "walk_in"),
+    customerId: record.customerId ?? null,
+    subtotal: record.subtotal ?? record.finalTotal,
+    discountTotal: record.discountTotal ?? 0,
+    items,
+    payments,
+    auditEvents: Array.isArray(record.auditEvents) ? record.auditEvents : [],
+  };
+}
 
 function requestToPromise<T>(request: IDBRequest<T>) {
   return new Promise<T>((resolve, reject) => {
@@ -184,9 +225,11 @@ export async function listTransactions() {
   await transactionToPromise(transaction);
   database.close();
 
-  return records.sort((left, right) =>
+  return records
+    .map((record) => normalizeStoredTransactionRecord(record))
+    .sort((left, right) =>
     right.createdAt.localeCompare(left.createdAt),
-  );
+    );
 }
 
 export async function getTransaction(localId: string) {
@@ -199,7 +242,7 @@ export async function getTransaction(localId: string) {
   await transactionToPromise(transaction);
   database.close();
 
-  return record ?? null;
+  return record ? normalizeStoredTransactionRecord(record) : null;
 }
 
 export async function listQueueItems() {
@@ -220,6 +263,83 @@ export async function getPendingQueueItems() {
   return items.filter((item) => item.status === "pending" || item.status === "failed");
 }
 
+export async function saveServiceDefinition(input: {
+  name: string;
+  expectedPrice: number;
+}) {
+  const [catalog, database] = await Promise.all([getReferenceCatalog(), openDatabase()]);
+  const transaction = database.transaction([REFERENCE_STORE, QUEUE_STORE], "readwrite");
+  const referenceStore = transaction.objectStore(REFERENCE_STORE);
+  const queueStore = transaction.objectStore(QUEUE_STORE);
+  const timestamp = new Date().toISOString();
+  const serviceId = createLocalId();
+
+  const service: ReferenceItem = {
+    id: serviceId,
+    name: input.name,
+    active: true,
+    expectedPrice: input.expectedPrice,
+    localOnly: true,
+  };
+
+  referenceStore.put({
+    id: REFERENCE_KEY,
+    catalog: {
+      ...catalog,
+      services: [service, ...catalog.services],
+      refreshedAt: timestamp,
+    },
+  });
+
+  queueStore.put({
+    id: createLocalId(),
+    entityType: "service",
+    entityLocalId: serviceId,
+    operation: "upsert",
+    status: "pending",
+    attemptCount: 0,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    lastError: null,
+    nextRetryAt: null,
+  });
+
+  await transactionToPromise(transaction);
+  database.close();
+
+  return service;
+}
+
+export async function removeQueueItem(queueItemId: string) {
+  const database = await openDatabase();
+  const transaction = database.transaction(QUEUE_STORE, "readwrite");
+  const store = transaction.objectStore(QUEUE_STORE);
+  store.delete(queueItemId);
+  await transactionToPromise(transaction);
+  database.close();
+}
+
+export async function markQueueItemFailed(queueItemId: string, errorMessage: string) {
+  const database = await openDatabase();
+  const transaction = database.transaction(QUEUE_STORE, "readwrite");
+  const store = transaction.objectStore(QUEUE_STORE);
+  const item = await requestToPromise<SyncQueueItem | undefined>(store.get(queueItemId));
+
+  if (item) {
+    store.put({
+      ...item,
+      status: "failed",
+      attemptCount: item.attemptCount + 1,
+      updatedAt: new Date().toISOString(),
+      lastError: errorMessage,
+      nextRetryAt: null,
+    });
+  }
+
+  await transactionToPromise(transaction);
+  database.close();
+}
+
 export async function saveTransaction(input: TransactionInput) {
   const [catalog, database] = await Promise.all([getReferenceCatalog(), openDatabase()]);
   const transaction = database.transaction(
@@ -234,6 +354,7 @@ export async function saveTransaction(input: TransactionInput) {
   const clientGeneratedId = createLocalId();
 
   const staffName =
+    input.staffName ??
     catalog.staff.find((member) => member.id === input.staffId)?.name ??
     "Unknown staff";
 
@@ -242,15 +363,47 @@ export async function saveTransaction(input: TransactionInput) {
       catalog.services.find((service) => service.id === item.serviceId)?.name ??
       "Service";
 
+    const itemStaffName =
+      item.staffName ??
+      catalog.staff.find((member) => member.id === item.staffId)?.name ??
+      null;
+
     return {
       localId: createLocalId(),
+      type: "service" as const,
       serviceId: item.serviceId,
       serviceLabelRaw: serviceLabel,
       quantity: item.quantity,
       unitPrice: item.unitPrice,
       lineTotal: item.quantity * item.unitPrice,
+      staffId: item.staffId ?? input.staffId,
+      staffName: itemStaffName,
+      notes: item.notes ?? null,
     };
   });
+
+  const subtotal =
+    input.subtotal ??
+    items.reduce((sum, item) => sum + Number(item.lineTotal ?? 0), 0);
+  const discountTotal = input.discountTotal ?? 0;
+  const payments =
+    input.payments?.length
+      ? input.payments.map((payment) => ({
+          localId: createLocalId(),
+          amount: payment.amount,
+          method: payment.method,
+          status: payment.status ?? "completed",
+          reference: payment.reference ?? null,
+        }))
+      : [
+          {
+            localId: createLocalId(),
+            amount: input.finalTotal,
+            method: input.paymentMethod,
+            status: "completed" as const,
+            reference: null,
+          },
+        ];
 
   const record: StoredTransactionRecord = {
     localId,
@@ -258,12 +411,19 @@ export async function saveTransaction(input: TransactionInput) {
     clientGeneratedId,
     businessId: catalog.businessId ?? null,
     transactionDate: input.transactionDate,
+    transactionStatus: input.transactionStatus ?? "confirmed",
     staffId: input.staffId,
     staffName,
+    customerKind:
+      input.customerKind ??
+      (input.customerName || input.customerPhone ? "named" : "walk_in"),
+    customerId: input.customerId ?? null,
     paymentMethod: input.paymentMethod,
     customerName: input.customerName,
     customerPhone: input.customerPhone,
     notes: input.notes,
+    subtotal,
+    discountTotal,
     finalTotal: input.finalTotal,
     primaryServiceName: items[0]?.serviceLabelRaw ?? "Service",
     entrySource: "manual",
@@ -274,6 +434,16 @@ export async function saveTransaction(input: TransactionInput) {
     createdAt: now,
     updatedAt: now,
     items,
+    payments,
+    auditEvents: [
+      {
+        localId: createLocalId(),
+        type: "transaction.created",
+        actorUserId: null,
+        source: "manual",
+        createdAt: now,
+      },
+    ],
   };
 
   const queueItem: SyncQueueItem = {
@@ -463,7 +633,7 @@ export async function replaceTransaction(record: LocalTransaction) {
   const database = await openDatabase();
   const transaction = database.transaction(TRANSACTION_STORE, "readwrite");
   const store = transaction.objectStore(TRANSACTION_STORE);
-  store.put(record);
+  store.put(normalizeStoredTransactionRecord(record));
   await transactionToPromise(transaction);
   database.close();
 }
