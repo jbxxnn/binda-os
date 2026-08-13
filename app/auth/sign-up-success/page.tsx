@@ -1,32 +1,35 @@
+import Link from "next/link";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+  AuthNotice,
+  authSecondaryLinkClassName,
+  AuthShell,
+} from "@/components/auth/auth-shell";
 
 export default function Page() {
   return (
-    <div className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
-      <div className="w-full max-w-sm">
-        <div className="flex flex-col gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-2xl">
-                Thank you for signing up!
-              </CardTitle>
-              <CardDescription>Check your email to confirm</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                You&apos;ve successfully signed up. Please check your email to
-                confirm your account before signing in.
-              </p>
-            </CardContent>
-          </Card>
-        </div>
+    <AuthShell
+      badge="Check Email"
+      title="Your account is almost ready"
+      description="Confirm your email to continue."
+    >
+      <div className="space-y-5">
+        <AuthNotice tone="success">
+          Check your inbox for the confirmation link. After confirmation, the
+          next screen should be business creation.
+        </AuthNotice>
+
+        <p className="text-sm leading-6 text-[#121212]/62">
+          Some environments sign the user in immediately. If that already
+          happened, you can continue now.
+        </p>
+
+        <p className="text-center text-sm text-[#121212]/62">
+          Want to continue?{" "}
+          <Link href="/auth/login" className={authSecondaryLinkClassName}>
+            Sign in
+          </Link>
+        </p>
       </div>
-    </div>
+    </AuthShell>
   );
 }

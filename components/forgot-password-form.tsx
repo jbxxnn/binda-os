@@ -1,24 +1,20 @@
 "use client";
 
-import { cn } from "@/lib/utils";
+import {
+  AuthField,
+  AuthNotice,
+  authInputClassName,
+  authPrimaryButtonClassName,
+  authSecondaryLinkClassName,
+  AuthShell,
+} from "@/components/auth/auth-shell";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import Link from "next/link";
 import { useState } from "react";
 
-export function ForgotPasswordForm({
-  className,
-  ...props
-}: React.ComponentPropsWithoutRef<"div">) {
+export function ForgotPasswordForm() {
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -45,61 +41,60 @@ export function ForgotPasswordForm({
   };
 
   return (
-    <div className={cn("flex flex-col gap-6", className)} {...props}>
+    <AuthShell
+      badge={success ? "Check Email" : "Reset Password"}
+      title={success ? "Check your inbox" : "Reset your password"}
+      description={
+        success
+          ? "Your reset link is on the way."
+          : "Enter your email to get a reset link."
+      }
+    >
       {success ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-2xl">Check Your Email</CardTitle>
-            <CardDescription>Password reset instructions sent</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              If you registered using your email and password, you will receive
-              a password reset email.
-            </p>
-          </CardContent>
-        </Card>
+        <div className="space-y-5">
+          <AuthNotice tone="success">
+            If you registered with email and password, a reset email has been
+            sent. Open the link there to choose a new password.
+          </AuthNotice>
+          <p className="text-center text-sm text-[#121212]/62">
+            Ready to go back?{" "}
+            <Link href="/auth/login" className={authSecondaryLinkClassName}>
+              Return to sign in
+            </Link>
+          </p>
+        </div>
       ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-2xl">Reset Your Password</CardTitle>
-            <CardDescription>
-              Type in your email and we&apos;ll send you a link to reset your
-              password
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleForgotPassword}>
-              <div className="flex flex-col gap-6">
-                <div className="grid gap-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    placeholder="m@example.com"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                  />
-                </div>
-                {error && <p className="text-sm text-red-500">{error}</p>}
-                <Button type="submit" className="w-full" disabled={isLoading}>
-                  {isLoading ? "Sending..." : "Send reset email"}
-                </Button>
-              </div>
-              <div className="mt-4 text-center text-sm">
-                Already have an account?{" "}
-                <Link
-                  href="/auth/login"
-                  className="underline underline-offset-4"
-                >
-                  Login
-                </Link>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
+        <form onSubmit={handleForgotPassword} className="space-y-5">
+          <AuthField htmlFor="email" label="Email">
+            <Input
+              id="email"
+              type="email"
+              placeholder="owner@hairven.com"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className={authInputClassName}
+            />
+          </AuthField>
+
+          {error ? <AuthNotice tone="error">{error}</AuthNotice> : null}
+
+          <Button
+            type="submit"
+            className={authPrimaryButtonClassName}
+            disabled={isLoading}
+          >
+            {isLoading ? "Sending..." : "Send reset link"}
+          </Button>
+
+          <p className="text-center text-sm text-[#121212]/62">
+            Already remember it?{" "}
+            <Link href="/auth/login" className={authSecondaryLinkClassName}>
+              Sign in
+            </Link>
+          </p>
+        </form>
       )}
-    </div>
+    </AuthShell>
   );
 }

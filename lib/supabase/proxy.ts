@@ -1,5 +1,9 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import {
+  clearSupabaseAuthCookies,
+  isRecoverableAuthSessionError,
+} from "@/lib/supabase/auth";
 import { hasEnvVars } from "../utils";
 
 export async function updateSession(request: NextRequest) {
@@ -38,20 +42,51 @@ export async function updateSession(request: NextRequest) {
     },
   );
 
-  // Do not run code between createServerClient and
-  // supabase.auth.getClaims(). A simple mistake could make it very hard to debug
-  // issues with users being randomly logged out.
+  const pathname = request.nextUrl.pathname;
+  const isAuthRoute = pathname.startsWith("/auth");
+  const isPublicRoute = pathname === "/" || isAuthRoute;
 
-  // IMPORTANT: If you remove getClaims() and you use server-side rendering
-  // with the Supabase client, your users may be randomly logged out.
-  const { data } = await supabase.auth.getClaims();
-  const user = data?.claims;
+  const handleRecoverableAuthError = () => {
+    clearSupabaseAuthCookies(supabaseResponse);
+
+    if (isPublicRoute) {
+      return supabaseResponse;
+    }
+
+    const url = request.nextUrl.clone();
+    url.pathname = "/auth/login";
+    return NextResponse.redirect(url);
+  };
+
+  let user = null;
+
+  try {
+    const {
+      data: { user: authenticatedUser },
+      error,
+    } = await supabase.auth.getUser();
+
+    if (error && isRecoverableAuthSessionError(error)) {
+      return handleRecoverableAuthError();
+    }
+
+    if (error) {
+      throw error;
+    }
+
+    user = authenticatedUser;
+  } catch (error) {
+    if (isRecoverableAuthSessionError(error)) {
+      return handleRecoverableAuthError();
+    }
+
+    throw error;
+  }
 
   if (
-    request.nextUrl.pathname !== "/" &&
+    pathname !== "/" &&
     !user &&
-    !request.nextUrl.pathname.startsWith("/login") &&
-    !request.nextUrl.pathname.startsWith("/auth")
+    !isAuthRoute
   ) {
     // no user, potentially respond by redirecting the user to the login page
     const url = request.nextUrl.clone();
