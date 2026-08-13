@@ -17,11 +17,11 @@ import { cn } from "@/lib/utils";
 const navigation = [
   { label: "Home", icon: Home, href: "/app" },
   { label: "Transactions", icon: ClipboardList, href: "/app/transactions" },
-  { label: "Customers", icon: Users, href: "/app", active: false },
-  { label: "Services", icon: Scissors, href: "/app", active: false },
-  { label: "Staff", icon: ShieldUser, href: "/app", active: false },
-  { label: "Reports", icon: FileBarChart2, href: "/app", active: false },
-  { label: "Settings", icon: Settings, href: "/app", active: false },
+  { label: "Customers", icon: Users, href: "/app/customers", active: false },
+  { label: "Services", icon: Scissors, href: "/app/services", active: false },
+  { label: "Staff", icon: ShieldUser, href: "/app/staff", active: false },
+  { label: "Reports", icon: FileBarChart2, href: "/app/reports", active: false },
+  { label: "Settings", icon: Settings, href: "/app/settings", active: false },
 ] as const;
 
 export function AppSidebar() {
@@ -32,10 +32,10 @@ export function AppSidebar() {
       <div className="sticky top-0 flex h-screen flex-col px-4 py-5 sm:px-5 lg:px-6 lg:py-6">
         <Link
           href="/app"
-          className="inline-flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 font-mono text-[11px] uppercase tracking-[0.28em] text-white"
+          className="inline-flex w-fit items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-3 font-mono text-[11px] uppercase tracking-[0.28em] text-white"
         >
           <Sparkles className="h-3.5 w-3.5 text-[#E89BFF]" />
-          Binda Salon OS
+          {/* Binda Salon OS */}
         </Link>
 
         <nav className="mt-8 grid gap-2">

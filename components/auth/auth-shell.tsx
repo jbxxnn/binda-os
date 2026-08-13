@@ -22,7 +22,7 @@ export function AuthShell({
   className,
 }: AuthShellProps) {
   return (
-    <main className="min-h-screen bg-[#f5eee6] text-[#121212]">
+    <main className="min-h-screen bg-gradient-to-br from-white via-[#E89BFF]/8 to-white text-[#121212]">
       <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
         <div className="flex items-center justify-between gap-3">
           <Link
@@ -41,7 +41,7 @@ export function AuthShell({
         <section className="flex flex-1 items-center justify-center py-8 lg:py-12">
           <div
             className={cn(
-              "w-full max-w-xl rounded-2xl border border-black/10 bg-[#fbf7f3] p-5 shadow-[0_20px_60px_rgba(18,18,18,0.08)] sm:p-6 lg:p-8",
+              "w-full max-w-lg rounded-2xl border-2 border-black/10 bg-gradient-to-br from-[#E89BFF]/20 via-[#E89BFF]/10 to-transparent p-5 shadow-[0_20px_60px_rgba(18,18,18,0.08)] sm:p-6 lg:p-8",
               className,
             )}
           >

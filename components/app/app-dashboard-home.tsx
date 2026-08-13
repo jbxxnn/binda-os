@@ -179,9 +179,9 @@ export function AppDashboardHome({
   ] as const;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#E89BFF]/20 via-[#E89BFF]/10 to-transparent px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+    <div className="min-h-screen bg-gradient-to-br from-white via-[#E89BFF]/8 to-white px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
-        <section className="relative overflow-hidden rounded-[1rem] border border-black/10 bg-white p-5 shadow-[0_22px_60px_rgba(18,18,18,0.06)] sm:p-6 lg:p-8">
+        <section className="relative overflow-hidden rounded-[1rem] border border-black/10 bg-white p-5 shadow-[0_20px_60px_rgba(18,18,18,0.08)] sm:p-6 lg:p-8">
           <div className="absolute right-0 top-0 h-44 w-44 rounded-full bg-[#E89BFF]/18 blur-3xl" />
           <div className="absolute bottom-0 left-0 h-36 w-36 rounded-full bg-[#9FC3FF]/12 blur-3xl" />
 
@@ -208,7 +208,7 @@ export function AppDashboardHome({
                 <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500 whitespace-nowrap">
                   Today so far
                 </p>
-                <div className="ml-4 h-0.5 flex-1 bg-gradient-to-r from-[#dddddd] to-transparent" />
+                {/* <div className="ml-4 h-0.5 flex-1 bg-gradient-to-r from-[#dddddd] to-transparent" /> */}
               </div>
               
 
@@ -219,7 +219,7 @@ export function AppDashboardHome({
                   return (
                     <div
                       key={card.label}
-                      className="rounded-[0.8rem] border border-black/10 bg-gray-100 p-4"
+                      className="rounded-[0.8rem] border border-black/10 bg-gray-100 shadow-[0_20px_60px_rgba(18,18,18,0.08)] p-4 "
                     >
                       <div className="flex items-center justify-between gap-3">
                         <p className="text-3xl font-black tracking-[-0.04em] text-slate-950">

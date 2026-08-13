@@ -25,7 +25,7 @@ export default async function AppLayout({
       businessName={business?.name ?? "Your Business"}
       userName={user?.displayName ?? "Owner"}
     >
-      <main className="min-h-screen bg-[#f5eee6] text-slate-950">{children}</main>
+      <main className="min-h-screen bg-gradient-to-br from-white via-[#E89BFF]/8 to-white text-slate-950">{children}</main>
     </AppSessionProvider>
   );
 }

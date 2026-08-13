@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export function LoginForm() {
   const [email, setEmail] = useState("");
@@ -21,6 +21,10 @@ export function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    router.prefetch("/auth/sign-up");
+  }, [router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,7 +99,11 @@ export function LoginForm() {
 
         <p className="text-center text-sm text-[#121212]/62">
           Don&apos;t have an account?{" "}
-          <Link href="/auth/sign-up" className={authSecondaryLinkClassName}>
+          <Link
+            href="/auth/sign-up"
+            prefetch
+            className={authSecondaryLinkClassName}
+          >
             Create one
           </Link>
         </p>

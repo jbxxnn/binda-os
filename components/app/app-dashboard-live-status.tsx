@@ -79,9 +79,9 @@ export function AppDashboardLiveStatus({
       <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
         {dateLabel}
       </p>
-      <p className="mt-2 text-sm font-semibold text-slate-950">
-        {timeLabel} · {businessDayProgress}% of business day
-      </p>
+      <span className="flex mt-2 text-sm text-slate-500 font-mono text-[11px] ">
+        <span className="font-semibold text-slate-950">{timeLabel}</span> · {businessDayProgress}% of business day
+      </span>
     </div>
   );
 }
