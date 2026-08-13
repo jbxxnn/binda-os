@@ -21,6 +21,8 @@ import {
   type TransactionComposerCustomerOption,
   type TransactionEntryOptions,
 } from "@/lib/supabase/dashboard";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { Cash02Icon } from "@hugeicons/core-free-icons";
 
 type SelectedCustomer =
   | {
@@ -626,10 +628,10 @@ export function AppTransactionComposer() {
     setSheet("new-service");
   }
 
-  function openDiscountSheet() {
-    setDiscountDraft(discountAmount > 0 ? String(discountAmount) : "");
-    setSheet("discount");
-  }
+  // function openDiscountSheet() {
+  //   setDiscountDraft(discountAmount > 0 ? String(discountAmount) : "");
+  //   setSheet("discount");
+  // }
 
   function selectCustomer(customer: TransactionComposerCustomerOption) {
     setSelectedCustomer({ kind: "existing", customer });
@@ -1202,7 +1204,7 @@ export function AppTransactionComposer() {
               )}
             </section>
 
-            <section ref={staffSectionRef} className="border-b border-black/10 py-6 rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]">
+            <section ref={staffSectionRef} className="border-b border-black/10 py-6 mt-4 rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
@@ -1230,7 +1232,7 @@ export function AppTransactionComposer() {
                 ) : null}
               </div>
               {quickSelectStaff.length > 0 ? (
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div className="mt-8 flex flex-wrap gap-2 border-t border-black/10 pt-4">
                   {quickSelectStaff.map((staffMember) => {
                     const active = staffMember.id === selectedStaffId;
 
@@ -1272,14 +1274,14 @@ export function AppTransactionComposer() {
 
             <section
               ref={servicesSectionRef}
-              className="border-b border-black/10 py-6 rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]" 
+              className="mt-4 border-b border-black/10 py-6 rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]" 
             >
               <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
                 Services
               </p>
-              <div className="mt-4 space-y-4">
+              <div className="mt-4 space-y-2">
                 {lineItemsWithDetails.map((item) => (
-                  <div key={item.id} className="flex items-start justify-between gap-4">
+                  <div key={item.id} className="flex items-center justify-between border border-black/5 gap-4 bg-[#f9f9f9] p-2 pl-4 hover:bg-[#f5f5f5] rounded-[0.3rem]">
                     <button
                       type="button"
                       onClick={() => openEditService(item.id)}
@@ -1288,12 +1290,14 @@ export function AppTransactionComposer() {
                       <p className="truncate text-base font-semibold text-slate-950">
                         {item.serviceName}
                       </p>
-                      <p className="mt-1 text-sm text-slate-500">
+                      <div className="flex gap-4">
+                      <p className="text-xs text-slate-500">
                         {item.quantity} × {formatCurrency(item.unitPrice)}
                       </p>
-                      <p className="mt-1 text-sm text-slate-500">
+                      <p className="text-xs text-slate-500">
                         Handled by {item.staffName}
                       </p>
+                      </div>
                     </button>
                     <div className="flex items-start gap-3">
                       <p className="pt-0.5 text-sm font-semibold text-slate-950">
@@ -1312,13 +1316,13 @@ export function AppTransactionComposer() {
                 ))}
               </div>
               {quickSelectServices.length > 0 ? (
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div className="mt-12 flex flex-wrap gap-2 border-t border-black/10 pt-4">
                   {quickSelectServices.map((service) => (
                     <button
                       key={service.id}
                       type="button"
                       onClick={() => addService(service.id)}
-                      className="rounded-[0.7rem] border border-black/10 bg-white px-2 py-0.5 text-sm font-medium text-slate-700 transition-colors hover:border-[#E89BFF] hover:bg-[#fbf4ff]"
+                      className="rounded-[0.7rem] border border-black/10 bg-[#E89BFF] px-2 py-0.5 text-sm font-medium text-slate-700 transition-colors hover:border-[#121212] hover:text-white hover:bg-[#121212]"
                     >
                       {service.name}
                     </button>
@@ -1328,7 +1332,7 @@ export function AppTransactionComposer() {
                     onClick={openServiceSheet}
                     className="rounded-[0.7rem] border border-black/10 bg-white px-2 py-0.5 text-sm font-medium text-slate-700 transition-colors hover:border-[#E89BFF] hover:bg-[#fbf4ff]"
                   >
-                    More services
+                    + More services
                   </button>
                 </div>
               ) : (
@@ -1338,23 +1342,23 @@ export function AppTransactionComposer() {
                     onClick={openServiceSheet}
                     className="rounded-[0.7rem] border border-black/10 bg-white px-2 py-0.5 text-sm font-medium text-slate-700 transition-colors hover:border-[#E89BFF] hover:bg-[#fbf4ff]"
                   >
-                    More services
+                    + More services
                   </button>
                 </div>
               )}
-              <button
+              {/* <button
                 type="button"
                 onClick={openDiscountSheet}
                 className="mt-3 block text-sm text-slate-500 transition-colors hover:text-slate-950"
               >
                 {discountAmount > 0 ? `Discount ${formatCurrency(discountAmount)}` : "+ Add discount"}
-              </button>
+              </button> */}
               {errors.services ? (
                 <p className="mt-2 text-sm text-[#b42318]">{errors.services}</p>
               ) : null}
             </section>
 
-            <section className="border-b border-black/10 py-6 rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]">
+            <section className="mt-4 border-b border-black/10 py-6 rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]">
               <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
                 Payment
               </p>
@@ -1367,12 +1371,13 @@ export function AppTransactionComposer() {
                       key={paymentMethod.id}
                       type="button"
                       onClick={() => setSelectedPaymentCode(paymentMethod.code)}
-                      className={`rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
+                      className={`flex flex-col items-center justify-center rounded-[0.3rem] border px-4 py-2 text-xs font-medium transition-colors ${
                         active
                           ? "border-[#E89BFF] bg-[#E89BFF] text-[#121212]"
                           : "border-black/10 bg-white text-slate-600 hover:border-[#E89BFF]"
                       }`}
                     >
+                      <HugeiconsIcon icon={Cash02Icon} size={12} />
                       {paymentMethod.label}
                     </button>
                   );
@@ -1383,7 +1388,7 @@ export function AppTransactionComposer() {
               ) : null}
             </section>
 
-            <section className="border-b border-black/10 py-6 lg:hidden rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]">
+            <section className="mt-4 border-b border-black/10 py-6 lg:hidden rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]">
               <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
                 Total
               </p>
@@ -1397,7 +1402,7 @@ export function AppTransactionComposer() {
               ) : null}
             </section>
 
-            <section className="py-6 rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]">
+            <section className="mt-4 py-6 rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]">
               <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
                 Notes
               </p>
