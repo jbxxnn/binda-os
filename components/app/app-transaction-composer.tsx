@@ -3,11 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Search, X } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useAppSession } from "@/components/app/app-session-provider";
 import {
   getReferenceCatalog,
   listTransactions,
+  saveStaffDefinition,
   saveTransaction as persistTransaction,
   saveServiceDefinition,
 } from "@/lib/offline/db";
@@ -49,6 +49,7 @@ type SheetType =
   | "staff"
   | "service"
   | "new-customer"
+  | "new-staff"
   | "new-service"
   | "discount"
   | "edit-service"
@@ -125,6 +126,10 @@ function formatRelativeVisitLabel(dateString: string) {
   return `Last visit ${Math.floor(diffDays / 30)} months ago`;
 }
 
+function getCustomerIdentityKey(name: string, phone: string) {
+  return `${name.trim().toLowerCase()}::${phone.trim()}`;
+}
+
 function buildComposerOptions(
   catalog: ReferenceCatalog,
   transactions: StoredTransactionRecord[],
@@ -155,19 +160,23 @@ function buildComposerOptions(
   const staffUsageCounts = new Map<string, number>();
   const serviceUsageCounts = new Map<string, number>();
   const customerMap = new Map<string, TransactionComposerCustomerOption>();
+  const customerIdentityMap = new Map<string, string>();
   const customerStaffCounts = new Map<string, Map<string, number>>();
 
   for (const customer of catalog.customers ?? []) {
     const referenceCustomer = customer as ReferenceCustomer;
+    const phone = String(referenceCustomer.phone ?? "").trim();
+    const identityKey = getCustomerIdentityKey(referenceCustomer.name, phone);
 
     customerMap.set(referenceCustomer.id, {
       id: referenceCustomer.id,
       name: referenceCustomer.name,
-      phone: String(referenceCustomer.phone ?? "").trim(),
+      phone,
       visitCount: 0,
       lastVisitLabel: "No recorded visits yet",
       usualStaffName: null,
     });
+    customerIdentityMap.set(identityKey, referenceCustomer.id);
   }
 
   for (const transaction of transactions) {
@@ -193,7 +202,11 @@ function buildComposerOptions(
     }
 
     const phone = String(transaction.customerPhone ?? "").trim();
-    const key = transaction.customerId ?? `${name.toLowerCase()}::${phone}`;
+    const identityKey = getCustomerIdentityKey(name, phone);
+    const key =
+      transaction.customerId ??
+      customerIdentityMap.get(identityKey) ??
+      identityKey;
 
     if (!customerMap.has(key)) {
       customerMap.set(key, {
@@ -206,6 +219,10 @@ function buildComposerOptions(
         ),
         usualStaffName: null,
       });
+    }
+
+    if (!customerIdentityMap.has(identityKey)) {
+      customerIdentityMap.set(identityKey, key);
     }
 
     const customer = customerMap.get(key);
@@ -403,7 +420,6 @@ function findPossibleDuplicate(
 }
 
 export function AppTransactionComposer() {
-  const router = useRouter();
   useAppSession();
   const { options, isHydrated, reloadOptions } = useComposerOptions();
   const customerInputRef = useRef<HTMLInputElement | null>(null);
@@ -422,6 +438,7 @@ export function AppTransactionComposer() {
   const [staffSearch, setStaffSearch] = useState("");
   const [newCustomerName, setNewCustomerName] = useState("");
   const [newCustomerPhone, setNewCustomerPhone] = useState("");
+  const [newStaffName, setNewStaffName] = useState("");
   const [newServiceName, setNewServiceName] = useState("");
   const [newServicePrice, setNewServicePrice] = useState("");
   const [discountAmount, setDiscountAmount] = useState(0);
@@ -442,11 +459,10 @@ export function AppTransactionComposer() {
   );
 
   useEffect(() => {
-    setSelectedStaffId((current) => current || options.staff[0]?.id || "");
     setSelectedPaymentCode(
       (current) => current || options.paymentMethods[0]?.code || "",
     );
-  }, [options.paymentMethods, options.staff]);
+  }, [options.paymentMethods]);
 
   useEffect(() => {
     customerInputRef.current?.focus();
@@ -531,12 +547,6 @@ export function AppTransactionComposer() {
     Boolean(selectedStaffId) &&
     Boolean(selectedPaymentCode) &&
     !isSaving;
-  const isDirty =
-    Boolean(customerQuery.trim()) ||
-    Boolean(selectedCustomer) ||
-    lineItems.length > 0 ||
-    Boolean(notes.trim());
-
   function resetComposer(keepPayment = true) {
     setCustomerQuery("");
     setSelectedCustomer(null);
@@ -547,6 +557,7 @@ export function AppTransactionComposer() {
     setStaffSearch("");
     setNewCustomerName("");
     setNewCustomerPhone("");
+    setNewStaffName("");
     setNewServiceName("");
     setNewServicePrice("");
     setDiscountAmount(0);
@@ -556,7 +567,7 @@ export function AppTransactionComposer() {
     setErrors({});
     setSaveSuccess(null);
     setDuplicateCandidate(null);
-    setSelectedStaffId(options.staff[0]?.id ?? "");
+    setSelectedStaffId("");
 
     if (!keepPayment) {
       setSelectedPaymentCode(options.paymentMethods[0]?.code ?? "");
@@ -594,17 +605,14 @@ export function AppTransactionComposer() {
     };
   }, []);
 
-  function closeComposer() {
-    if (isDirty && !window.confirm("Discard this transaction?")) {
-      return;
-    }
-
-    router.push("/app");
-  }
-
   function openStaffSheet() {
     setStaffSearch("");
     setSheet("staff");
+  }
+
+  function openNewStaffSheet() {
+    setNewStaffName("");
+    setSheet("new-staff");
   }
 
   function openServiceSheet() {
@@ -639,6 +647,11 @@ export function AppTransactionComposer() {
     requestAnimationFrame(() => customerInputRef.current?.focus());
   }
 
+  function clearSelectedStaff() {
+    setSelectedStaffId("");
+    setErrors((current) => ({ ...current, staff: undefined }));
+  }
+
   function selectStaff(staffId: string) {
     setSelectedStaffId(staffId);
     setErrors((current) => ({ ...current, staff: undefined }));
@@ -648,6 +661,27 @@ export function AppTransactionComposer() {
       ),
     );
     setSheet(null);
+  }
+
+  async function createAndUseStaff() {
+    const name = newStaffName.trim();
+
+    if (!name) {
+      return;
+    }
+
+    const staffMember = await saveStaffDefinition({ name });
+    await reloadOptions();
+    setSelectedStaffId(staffMember.id);
+    setLineItems((current) =>
+      current.map((item) => ({
+        ...item,
+        staffId: item.staffId || staffMember.id,
+      })),
+    );
+    setNewStaffName("");
+    setSheet(null);
+    void syncOfflineData();
   }
 
   function addService(serviceId: string) {
@@ -677,11 +711,20 @@ export function AppTransactionComposer() {
       expectedPrice,
     });
 
-    await reloadOptions();
-    addService(service.id);
-    void syncOfflineData();
+    const activeStaffId = selectedStaffId || options.staff[0]?.id || "";
+
+    setSelectedStaffId(activeStaffId);
+    setLineItems((current) => [
+      ...current,
+      createLineItem(service.id, expectedPrice, activeStaffId),
+    ]);
+    setErrors((current) => ({ ...current, services: undefined }));
+    setSheet(null);
     setNewServiceName("");
     setNewServicePrice("");
+    await reloadOptions();
+    setSelectedStaffId(activeStaffId);
+    void syncOfflineData();
   }
 
   function applyDiscount() {
@@ -908,6 +951,8 @@ export function AppTransactionComposer() {
   }
 
   const selectedStaff = options.staff.find((entry) => entry.id === selectedStaffId);
+  const quickSelectStaff = options.recentStaff.slice(0, 7);
+  const quickSelectServices = options.recentServices.slice(0, 7);
   const visibleRecentStaff = options.recentStaff.filter((entry) =>
     filteredStaff.some((candidate) => candidate.id === entry.id),
   );
@@ -972,14 +1017,26 @@ export function AppTransactionComposer() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f5eee6] text-slate-950">
-      <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-10 lg:px-8">
-        <div className="min-h-screen bg-[#f5eee6]">
-          <header className="sticky top-0 z-20 border-b border-black/10 bg-[#f5eee6]/95 backdrop-blur">
+    <div className="min-h-screen bg-white text-slate-950">
+      <div className="mx-auto flex min-h-screen w-full max-w-5xl flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-10 lg:px-8">
+        <div className="min-h-screen bg-white ">
+          {/* <header className="sticky top-0 z-20 border-b border-black/10 bg-[#f5eee6]/95 backdrop-blur">
             <div className="flex items-center justify-between px-4 py-4 sm:px-6">
               <button
                 type="button"
-                onClick={closeComposer}
+                onClick={() => {
+                  if (
+                    (Boolean(customerQuery.trim()) ||
+                      Boolean(selectedCustomer) ||
+                      lineItems.length > 0 ||
+                      Boolean(notes.trim())) &&
+                    !window.confirm("Discard this transaction?")
+                  ) {
+                    return;
+                  }
+
+                  window.location.href = "/app";
+                }}
                 className="inline-flex h-10 w-10 items-center justify-center rounded-full text-slate-950"
                 aria-label="Close transaction composer"
               >
@@ -990,10 +1047,10 @@ export function AppTransactionComposer() {
               </h1>
               <span className="w-10" aria-hidden="true" />
             </div>
-          </header>
+          </header> */}
 
-          <div className="px-4 pb-32 pt-6 sm:px-6">
-            <div className="border-b border-black/10 pb-6">
+          <div className="px-4 pb-32 pt-6 sm:px-6 ">
+            <div className="pb-6">
               {!isHydrated ? (
                 <p className="text-sm text-slate-500">
                   Opening from local data...
@@ -1038,7 +1095,7 @@ export function AppTransactionComposer() {
               </section>
             ) : null}
 
-            <section className="border-b border-black/10 py-6">
+            <section className="border-b border-black/10 py-6 rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]">
               <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
                 Customer
               </p>
@@ -1129,7 +1186,7 @@ export function AppTransactionComposer() {
                     <button
                       type="button"
                       onClick={() => setSheet("new-customer")}
-                      className="font-semibold text-slate-950 transition-colors hover:text-[#a65bd3]"
+                      className="font-semibold text-slate-950 transition-colors bg-[#E89BFF] hover:text-[#121212] rounded-full px-4 py-2"
                     >
                       + New customer
                     </button>
@@ -1145,14 +1202,14 @@ export function AppTransactionComposer() {
               )}
             </section>
 
-            <section ref={staffSectionRef} className="border-b border-black/10 py-6">
+            <section ref={staffSectionRef} className="border-b border-black/10 py-6 rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
                     Staff
                   </p>
                   {selectedStaff ? (
-                    <p className="mt-4 text-base font-semibold text-slate-950">
+                    <p className="mt-4 text-[1.25rem] font-semibold text-slate-950">
                       {selectedStaff.name}
                     </p>
                   ) : (
@@ -1162,19 +1219,60 @@ export function AppTransactionComposer() {
                     <p className="mt-2 text-sm text-[#b42318]">{errors.staff}</p>
                   ) : null}
                 </div>
-                <button
-                  type="button"
-                  onClick={openStaffSheet}
-                  className="text-sm font-medium text-slate-500 transition-colors hover:text-slate-950"
-                >
-                  {selectedStaff ? "Change" : "Select"}
-                </button>
+                {selectedStaff ? (
+                  <button
+                    type="button"
+                    onClick={clearSelectedStaff}
+                    className="text-sm font-medium text-slate-500 transition-colors hover:text-slate-950"
+                  >
+                    Change
+                  </button>
+                ) : null}
               </div>
+              {quickSelectStaff.length > 0 ? (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {quickSelectStaff.map((staffMember) => {
+                    const active = staffMember.id === selectedStaffId;
+
+                    return (
+                      <button
+                        key={staffMember.id}
+                        type="button"
+                        onClick={() => selectStaff(staffMember.id)}
+                        className={`rounded-[0.7rem] border px-2 py-0.5 text-sm font-medium transition-colors ${
+                          active
+                            ? "border-[#121212] bg-[#121212] text-white"
+                            : "border-black/10 bg-[#E89BFF] text-slate-700 hover:border-[#121212] hover:text-white hover:bg-[#121212]"
+                        }`}
+                      >
+                        {staffMember.name}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={openStaffSheet}
+                    className="rounded-[0.7rem] border border-black/10 bg-white px-2 py-0.5 text-sm font-medium text-slate-700 transition-colors hover:border-[#E89BFF] hover:bg-[#fbf4ff]"
+                  >
+                    + View More
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={openStaffSheet}
+                    className="rounded-[0.7rem] border border-black/10 bg-white px-2 py-0.5 text-sm font-medium text-slate-700 transition-colors hover:border-[#E89BFF] hover:bg-[#fbf4ff]"
+                  >
+                    More staff
+                  </button>
+                </div>
+              )}
             </section>
 
             <section
               ref={servicesSectionRef}
-              className="border-b border-black/10 py-6"
+              className="border-b border-black/10 py-6 rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]" 
             >
               <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
                 Services
@@ -1213,13 +1311,37 @@ export function AppTransactionComposer() {
                   </div>
                 ))}
               </div>
-              <button
-                type="button"
-                onClick={openServiceSheet}
-                className="mt-4 text-sm font-semibold text-slate-950 transition-colors hover:text-[#a65bd3]"
-              >
-                + Add service
-              </button>
+              {quickSelectServices.length > 0 ? (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {quickSelectServices.map((service) => (
+                    <button
+                      key={service.id}
+                      type="button"
+                      onClick={() => addService(service.id)}
+                      className="rounded-[0.7rem] border border-black/10 bg-white px-2 py-0.5 text-sm font-medium text-slate-700 transition-colors hover:border-[#E89BFF] hover:bg-[#fbf4ff]"
+                    >
+                      {service.name}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={openServiceSheet}
+                    className="rounded-[0.7rem] border border-black/10 bg-white px-2 py-0.5 text-sm font-medium text-slate-700 transition-colors hover:border-[#E89BFF] hover:bg-[#fbf4ff]"
+                  >
+                    More services
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={openServiceSheet}
+                    className="rounded-[0.7rem] border border-black/10 bg-white px-2 py-0.5 text-sm font-medium text-slate-700 transition-colors hover:border-[#E89BFF] hover:bg-[#fbf4ff]"
+                  >
+                    More services
+                  </button>
+                </div>
+              )}
               <button
                 type="button"
                 onClick={openDiscountSheet}
@@ -1232,7 +1354,7 @@ export function AppTransactionComposer() {
               ) : null}
             </section>
 
-            <section className="border-b border-black/10 py-6">
+            <section className="border-b border-black/10 py-6 rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]">
               <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
                 Payment
               </p>
@@ -1261,7 +1383,7 @@ export function AppTransactionComposer() {
               ) : null}
             </section>
 
-            <section className="border-b border-black/10 py-6 lg:hidden">
+            <section className="border-b border-black/10 py-6 lg:hidden rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]">
               <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
                 Total
               </p>
@@ -1275,7 +1397,7 @@ export function AppTransactionComposer() {
               ) : null}
             </section>
 
-            <section className="py-6">
+            <section className="py-6 rounded-[1rem] border border-black/10 bg-white p-6 shadow-[0_18px_50px_rgba(18,18,18,0.06)]">
               <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
                 Notes
               </p>
@@ -1453,6 +1575,14 @@ export function AppTransactionComposer() {
                       ))}
                     </div>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={openNewStaffSheet}
+                    className="mt-5 text-sm font-semibold text-slate-950 transition-colors hover:text-[#a65bd3]"
+                  >
+                    + Create new staff
+                  </button>
                 </>
               ) : null}
 
@@ -1557,6 +1687,32 @@ export function AppTransactionComposer() {
                     className="mt-5 inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-bold uppercase tracking-[0.16em] text-white disabled:cursor-not-allowed disabled:bg-slate-300"
                   >
                     Add customer
+                  </button>
+                </>
+              ) : null}
+
+              {sheet === "new-staff" ? (
+                <>
+                  <h2 className="text-lg font-semibold tracking-[-0.03em] text-slate-950">
+                    New staff
+                  </h2>
+                  <div className="mt-5">
+                    <label className="text-sm font-medium text-slate-700">Name</label>
+                    <input
+                      value={newStaffName}
+                      onChange={(event) => setNewStaffName(event.target.value)}
+                      className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void createAndUseStaff();
+                    }}
+                    disabled={!newStaffName.trim()}
+                    className="mt-5 inline-flex w-full items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-bold uppercase tracking-[0.16em] text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    Add and use
                   </button>
                 </>
               ) : null}

@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { isRecoverableAuthSessionError } from "@/lib/supabase/auth";
 import {
+  deleteTransaction as deleteLocalTransaction,
   getPendingQueueItems,
   getReferenceCatalog,
   getTransaction,
@@ -10,6 +11,7 @@ import {
   markQueueItemFailed,
   removeQueueItem,
   replaceReferenceCatalog,
+  setTransactionCustomerId,
   setTransactionBusinessId,
 } from "@/lib/offline/db";
 import type { ReferenceCatalog, SyncSummary } from "@/lib/offline/types";
@@ -39,6 +41,63 @@ type RemoteCustomerRow = {
   phone: string | null;
   email: string | null;
 };
+
+function mergeReferenceItems(
+  localItems: ReferenceCatalog["staff"] | ReferenceCatalog["services"],
+  remoteItems: ReferenceCatalog["staff"] | ReferenceCatalog["services"],
+) {
+  const merged = new Map(remoteItems.map((item) => [item.id, item]));
+
+  for (const item of localItems) {
+    if (item.localOnly && !merged.has(item.id)) {
+      merged.set(item.id, item);
+    }
+  }
+
+  return [...merged.values()];
+}
+
+function mergeReferenceCustomers(
+  localCustomers: ReferenceCatalog["customers"],
+  remoteCustomers: ReferenceCatalog["customers"],
+) {
+  const merged = new Map<string, ReferenceCatalog["customers"][number]>();
+
+  for (const customer of remoteCustomers) {
+    const name = String(customer.name ?? "").trim().toLowerCase();
+    const phone = String(customer.phone ?? "").trim();
+    const identityKey = `${name}::${phone}`;
+    merged.set(identityKey, customer);
+  }
+
+  for (const customer of localCustomers) {
+    const name = String(customer.name ?? "").trim().toLowerCase();
+    const phone = String(customer.phone ?? "").trim();
+    const identityKey = `${name}::${phone}`;
+
+    if (!merged.has(identityKey)) {
+      merged.set(identityKey, customer);
+    }
+  }
+
+  return [...merged.values()];
+}
+
+function mergeReferenceCatalogs(
+  currentCatalog: ReferenceCatalog,
+  remoteCatalog: ReferenceCatalog,
+): ReferenceCatalog {
+  return {
+    ...currentCatalog,
+    ...remoteCatalog,
+    staff: mergeReferenceItems(currentCatalog.staff, remoteCatalog.staff),
+    services: mergeReferenceItems(currentCatalog.services, remoteCatalog.services),
+    customers: mergeReferenceCustomers(
+      currentCatalog.customers ?? [],
+      remoteCatalog.customers ?? [],
+    ),
+  };
+}
 
 async function resolveBusinessMembership() {
   const supabase = createClient();
@@ -268,10 +327,7 @@ export async function syncOfflineData(): Promise<SyncSummary> {
   const currentCatalog = await getReferenceCatalog();
   const remoteCatalog = await pullReferenceCatalog(businessId);
 
-  await replaceReferenceCatalog({
-    ...currentCatalog,
-    ...remoteCatalog,
-  });
+  await replaceReferenceCatalog(mergeReferenceCatalogs(currentCatalog, remoteCatalog));
 
   let syncedTransactions = 0;
   let failedTransactions = 0;
@@ -281,10 +337,57 @@ export async function syncOfflineData(): Promise<SyncSummary> {
       return left.createdAt.localeCompare(right.createdAt);
     }
 
-    return left.entityType === "service" ? -1 : 1;
+    const priority: Record<string, number> = {
+      staff: 0,
+      service: 1,
+      transaction: 2,
+    };
+
+    return priority[left.entityType] - priority[right.entityType];
   });
 
   for (const queueItem of orderedQueueItems) {
+    if (queueItem.entityType === "staff") {
+      const catalog = await getReferenceCatalog();
+      const staffMember = catalog.staff.find((item) => item.id === queueItem.entityLocalId);
+
+      if (!staffMember) {
+        await removeQueueItem(queueItem.id);
+        continue;
+      }
+
+      try {
+        const staffResult = await supabase.from("staff").upsert(
+          {
+            id: staffMember.id,
+            business_id: businessId,
+            name: staffMember.name,
+            active: staffMember.active,
+          },
+          {
+            onConflict: "id",
+          },
+        );
+
+        if (staffResult.error) {
+          throw staffResult.error;
+        }
+
+        await replaceReferenceCatalog({
+          ...catalog,
+          staff: catalog.staff.map((item) =>
+            item.id === staffMember.id ? { ...item, localOnly: false } : item,
+          ),
+        });
+        await removeQueueItem(queueItem.id);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Staff sync failed.";
+        await markQueueItemFailed(queueItem.id, message);
+      }
+
+      continue;
+    }
+
     if (queueItem.entityType === "service") {
       const catalog = await getReferenceCatalog();
       const service = catalog.services.find((item) => item.id === queueItem.entityLocalId);
@@ -342,6 +445,9 @@ export async function syncOfflineData(): Promise<SyncSummary> {
       }
 
       const customerId = await resolveRemoteCustomerId(businessId, transaction);
+      if (customerId && transaction.customerId !== customerId) {
+        await setTransactionCustomerId(transaction.localId, customerId);
+      }
       const primaryPayment = transaction.payments[0];
 
       const transactionPayload = {
@@ -474,4 +580,72 @@ export async function syncOfflineData(): Promise<SyncSummary> {
     failedTransactions,
     skipped: false,
   };
+}
+
+export async function deleteStoredTransaction(localId: string) {
+  const transaction = await getTransaction(localId);
+
+  if (!transaction) {
+    return;
+  }
+
+  if (!transaction.remoteId) {
+    await deleteLocalTransaction(localId);
+    return;
+  }
+
+  if (!hasEnvVars) {
+    throw new Error("Supabase is not configured, so synced transactions cannot be deleted yet.");
+  }
+
+  const { membership, supabase, userId } = await resolveBusinessMembership();
+
+  if (!userId) {
+    throw new Error("Sign in again before deleting this synced transaction.");
+  }
+
+  if (!membership?.business_id) {
+    throw new Error("No business membership exists for this account.");
+  }
+
+  const remoteId = transaction.remoteId;
+
+  const deleteAuditResult = await supabase
+    .from("transaction_audit_events")
+    .delete()
+    .eq("transaction_id", remoteId);
+
+  if (deleteAuditResult.error) {
+    throw deleteAuditResult.error;
+  }
+
+  const deletePaymentsResult = await supabase
+    .from("payments")
+    .delete()
+    .eq("transaction_id", remoteId);
+
+  if (deletePaymentsResult.error) {
+    throw deletePaymentsResult.error;
+  }
+
+  const deleteItemsResult = await supabase
+    .from("transaction_items")
+    .delete()
+    .eq("transaction_id", remoteId);
+
+  if (deleteItemsResult.error) {
+    throw deleteItemsResult.error;
+  }
+
+  const deleteTransactionResult = await supabase
+    .from("transactions")
+    .delete()
+    .eq("id", remoteId)
+    .eq("business_id", membership.business_id);
+
+  if (deleteTransactionResult.error) {
+    throw deleteTransactionResult.error;
+  }
+
+  await deleteLocalTransaction(localId);
 }

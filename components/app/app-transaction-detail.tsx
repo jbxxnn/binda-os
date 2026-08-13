@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { getTransaction, listTransactions } from "@/lib/offline/db";
-import { syncOfflineData } from "@/lib/offline/sync";
+import { deleteStoredTransaction, syncOfflineData } from "@/lib/offline/sync";
 import type { StoredTransactionRecord } from "@/lib/offline/types";
 
 type AppTransactionDetailProps = {
@@ -53,10 +54,13 @@ function getSyncBadge(transaction: StoredTransactionRecord) {
 }
 
 export function AppTransactionDetail({ localId }: AppTransactionDetailProps) {
+  const router = useRouter();
   const [transaction, setTransaction] = useState<StoredTransactionRecord | null>(null);
   const [relatedTransactions, setRelatedTransactions] = useState<StoredTransactionRecord[]>([]);
   const [isHydrated, setIsHydrated] = useState(false);
   const [isRetryingSync, setIsRetryingSync] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const customerHistory = useMemo(() => {
     if (!transaction?.customerName && !transaction?.customerPhone) {
       return [];
@@ -159,6 +163,38 @@ export function AppTransactionDetail({ localId }: AppTransactionDetailProps) {
       setRelatedTransactions(transactions);
     } finally {
       setIsRetryingSync(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!transaction) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      transaction.remoteId
+        ? "Delete this transaction from this device and the database?"
+        : "Delete this local transaction?",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsDeleting(true);
+    setDeleteError(null);
+
+    try {
+      await deleteStoredTransaction(transaction.localId);
+      router.push("/app/transactions");
+      router.refresh();
+    } catch (error) {
+      setDeleteError(
+        error instanceof Error
+          ? error.message
+          : "Could not delete this transaction right now.",
+      );
+      setIsDeleting(false);
     }
   }
 
@@ -316,6 +352,20 @@ export function AppTransactionDetail({ localId }: AppTransactionDetailProps) {
               >
                 {isRetryingSync ? "Retrying..." : "Retry sync"}
               </button>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={() => {
+                void handleDelete();
+              }}
+              disabled={isDeleting}
+              className="mt-3 inline-flex w-full items-center justify-center rounded-full border border-[#f1b3ad] bg-[#fff2f0] px-4 py-2 text-sm font-semibold text-[#b42318] transition-colors hover:bg-[#ffe3df] disabled:cursor-not-allowed disabled:border-black/10 disabled:bg-slate-100 disabled:text-slate-400"
+            >
+              {isDeleting ? "Deleting..." : "Delete transaction"}
+            </button>
+            {deleteError ? (
+              <p className="mt-2 text-sm text-[#b42318]">{deleteError}</p>
             ) : null}
 
             <div className="mt-6 border-t border-black/10 pt-6">

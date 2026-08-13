@@ -1,7 +1,7 @@
 export type SyncStatus = "local_only" | "pending_sync" | "synced" | "sync_failed";
 
 export type QueueStatus = "pending" | "processing" | "failed";
-export type QueueEntityType = "transaction" | "service";
+export type QueueEntityType = "transaction" | "service" | "staff";
 
 export type ReferenceItem = {
   id: string;

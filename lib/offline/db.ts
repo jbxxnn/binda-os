@@ -48,6 +48,17 @@ const defaultCatalog: ReferenceCatalog = {
   businessId: null,
 };
 
+function normalizeReferenceCatalog(catalog: ReferenceCatalog): ReferenceCatalog {
+  return {
+    ...catalog,
+    paymentMethods:
+      Array.isArray(catalog.paymentMethods) && catalog.paymentMethods.length > 0
+        ? catalog.paymentMethods
+        : defaultCatalog.paymentMethods,
+    customers: Array.isArray(catalog.customers) ? catalog.customers : [],
+  };
+}
+
 type ReferenceCatalogRecord = {
   id: string;
   catalog: ReferenceCatalog;
@@ -183,7 +194,7 @@ async function seedCatalogIfNeeded() {
   if (!existing) {
     store.put({
       id: REFERENCE_KEY,
-      catalog: defaultCatalog,
+      catalog: normalizeReferenceCatalog(defaultCatalog),
     });
   }
 
@@ -202,7 +213,7 @@ export async function getReferenceCatalog() {
   await transactionToPromise(transaction);
   database.close();
 
-  return record?.catalog ?? defaultCatalog;
+  return normalizeReferenceCatalog(record?.catalog ?? defaultCatalog);
 }
 
 export async function replaceReferenceCatalog(catalog: ReferenceCatalog) {
@@ -211,7 +222,7 @@ export async function replaceReferenceCatalog(catalog: ReferenceCatalog) {
   const store = transaction.objectStore(REFERENCE_STORE);
   store.put({
     id: REFERENCE_KEY,
-    catalog,
+    catalog: normalizeReferenceCatalog(catalog),
   });
   await transactionToPromise(transaction);
   database.close();
@@ -308,6 +319,51 @@ export async function saveServiceDefinition(input: {
   database.close();
 
   return service;
+}
+
+export async function saveStaffDefinition(input: {
+  name: string;
+}) {
+  const [catalog, database] = await Promise.all([getReferenceCatalog(), openDatabase()]);
+  const transaction = database.transaction([REFERENCE_STORE, QUEUE_STORE], "readwrite");
+  const referenceStore = transaction.objectStore(REFERENCE_STORE);
+  const queueStore = transaction.objectStore(QUEUE_STORE);
+  const timestamp = new Date().toISOString();
+  const staffId = createLocalId();
+
+  const staffMember: ReferenceItem = {
+    id: staffId,
+    name: input.name,
+    active: true,
+    localOnly: true,
+  };
+
+  referenceStore.put({
+    id: REFERENCE_KEY,
+    catalog: {
+      ...catalog,
+      staff: [staffMember, ...catalog.staff],
+      refreshedAt: timestamp,
+    },
+  });
+
+  queueStore.put({
+    id: createLocalId(),
+    entityType: "staff",
+    entityLocalId: staffId,
+    operation: "upsert",
+    status: "pending",
+    attemptCount: 0,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    lastError: null,
+    nextRetryAt: null,
+  });
+
+  await transactionToPromise(transaction);
+  database.close();
+
+  return staffMember;
 }
 
 export async function removeQueueItem(queueItemId: string) {
@@ -615,6 +671,29 @@ export async function setTransactionBusinessId(localId: string, businessId: stri
   database.close();
 }
 
+export async function setTransactionCustomerId(
+  localId: string,
+  customerId: string,
+) {
+  const database = await openDatabase();
+  const transaction = database.transaction(TRANSACTION_STORE, "readwrite");
+  const store = transaction.objectStore(TRANSACTION_STORE);
+  const record = await requestToPromise<StoredTransactionRecord | undefined>(
+    store.get(localId),
+  );
+
+  if (record) {
+    store.put({
+      ...record,
+      customerId,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  await transactionToPromise(transaction);
+  database.close();
+}
+
 export async function getQueueDepth() {
   const items = await listQueueItems();
   return items.length;
@@ -634,6 +713,26 @@ export async function replaceTransaction(record: LocalTransaction) {
   const transaction = database.transaction(TRANSACTION_STORE, "readwrite");
   const store = transaction.objectStore(TRANSACTION_STORE);
   store.put(normalizeStoredTransactionRecord(record));
+  await transactionToPromise(transaction);
+  database.close();
+}
+
+export async function deleteTransaction(localId: string) {
+  const database = await openDatabase();
+  const transaction = database.transaction(
+    [TRANSACTION_STORE, QUEUE_STORE],
+    "readwrite",
+  );
+  const transactionStore = transaction.objectStore(TRANSACTION_STORE);
+  const queueStore = transaction.objectStore(QUEUE_STORE);
+
+  transactionStore.delete(localId);
+
+  const queueItems = await requestToPromise<SyncQueueItem[]>(queueStore.getAll());
+  queueItems
+    .filter((item) => item.entityLocalId === localId)
+    .forEach((item) => queueStore.delete(item.id));
+
   await transactionToPromise(transaction);
   database.close();
 }
