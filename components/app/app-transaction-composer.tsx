@@ -404,7 +404,7 @@ function findPossibleDuplicate(
 
 export function AppTransactionComposer() {
   const router = useRouter();
-  const { businessName, userName } = useAppSession();
+  useAppSession();
   const { options, isHydrated, reloadOptions } = useComposerOptions();
   const customerInputRef = useRef<HTMLInputElement | null>(null);
   const staffSectionRef = useRef<HTMLElement | null>(null);
@@ -994,14 +994,8 @@ export function AppTransactionComposer() {
 
           <div className="px-4 pb-32 pt-6 sm:px-6">
             <div className="border-b border-black/10 pb-6">
-              <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-500">
-                {businessName}
-              </p>
-              <p className="mt-3 text-3xl font-black leading-[0.92] tracking-[-0.05em] text-slate-950">
-                Welcome, {userName}
-              </p>
               {!isHydrated ? (
-                <p className="mt-3 text-sm text-slate-500">
+                <p className="text-sm text-slate-500">
                   Opening from local data...
                 </p>
               ) : null}
