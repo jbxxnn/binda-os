@@ -1151,7 +1151,7 @@ export function AppTransactionComposer() {
                       value={customerQuery}
                       onChange={(event) => setCustomerQuery(event.target.value)}
                       placeholder="Search name or phone"
-                      className="w-full bg-transparent text-sm outline-none placeholder:text-slate-400"
+                      className="w-full bg-transparent text-base outline-none placeholder:text-slate-400 md:text-sm"
                     />
                   </label>
 
@@ -1412,7 +1412,7 @@ export function AppTransactionComposer() {
                   onChange={(event) => setNotes(event.target.value)}
                   rows={4}
                   placeholder="Add a note..."
-                  className="mt-4 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-sm outline-none placeholder:text-slate-400"
+                  className="mt-4 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-base outline-none placeholder:text-slate-400 md:text-sm"
                 />
               ) : (
                 <button
@@ -1543,7 +1543,7 @@ export function AppTransactionComposer() {
                       value={staffSearch}
                       onChange={(event) => setStaffSearch(event.target.value)}
                       placeholder="Search staff"
-                      className="w-full bg-transparent text-sm outline-none placeholder:text-slate-400"
+                      className="w-full bg-transparent text-base outline-none placeholder:text-slate-400 md:text-sm"
                     />
                   </label>
 
@@ -1602,7 +1602,7 @@ export function AppTransactionComposer() {
                       value={serviceSearch}
                       onChange={(event) => setServiceSearch(event.target.value)}
                       placeholder="Search services"
-                      className="w-full bg-transparent text-sm outline-none placeholder:text-slate-400"
+                      className="w-full bg-transparent text-base outline-none placeholder:text-slate-400 md:text-sm"
                     />
                   </label>
 
@@ -1671,7 +1671,7 @@ export function AppTransactionComposer() {
                       <input
                         value={newCustomerName}
                         onChange={(event) => setNewCustomerName(event.target.value)}
-                        className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+                        className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-base outline-none md:text-sm"
                       />
                     </div>
                     <div>
@@ -1681,7 +1681,7 @@ export function AppTransactionComposer() {
                         onChange={(event) => setNewCustomerPhone(event.target.value)}
                         inputMode="tel"
                         placeholder="Phone helps Binda recognize returning customers."
-                        className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-sm outline-none placeholder:text-slate-400"
+                        className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-base outline-none placeholder:text-slate-400 md:text-sm"
                       />
                     </div>
                   </div>
@@ -1706,7 +1706,7 @@ export function AppTransactionComposer() {
                     <input
                       value={newStaffName}
                       onChange={(event) => setNewStaffName(event.target.value)}
-                      className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+                      className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-base outline-none md:text-sm"
                     />
                   </div>
                   <button
@@ -1733,7 +1733,7 @@ export function AppTransactionComposer() {
                       <input
                         value={newServiceName}
                         onChange={(event) => setNewServiceName(event.target.value)}
-                        className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+                        className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-base outline-none md:text-sm"
                       />
                     </div>
                     <div>
@@ -1743,7 +1743,7 @@ export function AppTransactionComposer() {
                         inputMode="numeric"
                         value={newServicePrice}
                         onChange={(event) => setNewServicePrice(event.target.value)}
-                        className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+                        className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-base outline-none md:text-sm"
                       />
                     </div>
                   </div>
@@ -1772,7 +1772,7 @@ export function AppTransactionComposer() {
                       inputMode="numeric"
                       value={discountDraft}
                       onChange={(event) => setDiscountDraft(event.target.value)}
-                      className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+                      className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-base outline-none md:text-sm"
                     />
                   </div>
                   <button
@@ -1803,7 +1803,7 @@ export function AppTransactionComposer() {
                             unitPrice: Math.max(0, Number(event.target.value) || 0),
                           }))
                         }
-                        className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+                        className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-base outline-none md:text-sm"
                       />
                     </div>
 
@@ -1851,7 +1851,7 @@ export function AppTransactionComposer() {
                               staffId: event.target.value,
                             }))
                           }
-                          className="w-full appearance-none rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+                          className="w-full appearance-none rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-base outline-none md:text-sm"
                         >
                           {options.staff.map((staffMember) => (
                             <option key={staffMember.id} value={staffMember.id}>
@@ -1874,7 +1874,7 @@ export function AppTransactionComposer() {
                           }))
                         }
                         rows={3}
-                        className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-sm outline-none"
+                        className="mt-2 w-full rounded-[0.9rem] border border-black/10 bg-white px-4 py-3 text-base outline-none md:text-sm"
                       />
                     </div>
                   </div>
