@@ -1,4 +1,6 @@
-import { ChevronDown } from "lucide-react";
+// import { ChevronDown } from "lucide-react";
+import { HugeiconsIcon } from "@hugeicons/react"; 
+import { UserAiIcon } from "@hugeicons/core-free-icons";
 
 type AppTopbarProps = {
   businessName: string;
@@ -22,10 +24,16 @@ export function AppTopbar({ businessName, userName }: AppTopbarProps) {
 
           <button
             type="button"
-            className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-[#fbf4ff] px-4 py-2.5 text-sm font-semibold text-slate-900"
+            className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-[#fbf4ff] px-2.5 py-2.5 text-sm font-semibold text-slate-900"
           >
-            {userName}
-            <ChevronDown className="h-4 w-4" />
+            {/* {userName} */}
+            {/* <ChevronDown className="h-4 w-4" /> */}
+            <HugeiconsIcon
+              icon={UserAiIcon}
+              size={16}
+              color="currentColor"
+              strokeWidth={1}
+            />
           </button>
         </div>
       </div>
